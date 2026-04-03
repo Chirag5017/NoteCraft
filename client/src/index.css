@@ -1,0 +1,58 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    @apply antialiased;
+  }
+
+  body {
+    @apply bg-white text-gray-900 dark:bg-gray-950 dark:text-gray-100;
+  }
+
+  * {
+    @apply box-border;
+  }
+}
+
+@layer utilities {
+  .page-transition {
+    @apply animate-fade-in;
+  }
+
+  /* TipTap editor styles */
+  .ProseMirror {
+    @apply outline-none min-h-[400px] prose prose-gray dark:prose-invert max-w-none;
+  }
+
+  .ProseMirror p.is-editor-empty:first-child::before {
+    @apply text-gray-400 dark:text-gray-600 float-left h-0 pointer-events-none;
+    content: attr(data-placeholder);
+  }
+
+  /* Collaborator cursor */
+  .collaboration-cursor__caret {
+    border-left: 1px solid;
+    border-right: 1px solid;
+    margin-left: -1px;
+    margin-right: -1px;
+    pointer-events: none;
+    position: relative;
+    word-break: normal;
+  }
+
+  .collaboration-cursor__label {
+    @apply text-xs font-medium px-1 py-0.5 rounded-sm whitespace-nowrap;
+    border-radius: 3px 3px 3px 0;
+    font-size: 12px;
+    font-style: normal;
+    font-weight: 600;
+    left: -1px;
+    line-height: normal;
+    pointer-events: none;
+    position: absolute;
+    top: -1.4em;
+    user-select: none;
+  }
+}
