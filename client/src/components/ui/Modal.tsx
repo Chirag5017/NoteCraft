@@ -19,7 +19,6 @@ const sizeClasses = {
 
 export function Modal({ isOpen, onClose, title, children, size = 'md' }: ModalProps) {
   const overlayRef = useRef<HTMLDivElement>(null);
-  const firstFocusableRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -30,9 +29,17 @@ export function Modal({ isOpen, onClose, title, children, size = 'md' }: ModalPr
 
     document.addEventListener('keydown', handleKeyDown);
     document.body.style.overflow = 'hidden';
-    firstFocusableRef.current?.focus();
+
+    // Focus the first input/textarea inside the modal, not the close button
+    const timer = setTimeout(() => {
+      const focusable = document.querySelector<HTMLElement>(
+        '[role="dialog"] input, [role="dialog"] textarea, [role="dialog"] select'
+      );
+      focusable?.focus();
+    }, 50);
 
     return () => {
+      clearTimeout(timer);
       document.removeEventListener('keydown', handleKeyDown);
       document.body.style.overflow = '';
     };
@@ -72,7 +79,6 @@ export function Modal({ isOpen, onClose, title, children, size = 'md' }: ModalPr
             {title}
           </h2>
           <button
-            ref={firstFocusableRef}
             onClick={onClose}
             aria-label="Close modal"
             className="rounded-lg p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 dark:hover:text-gray-200 transition-colors"

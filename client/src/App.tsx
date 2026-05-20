@@ -114,7 +114,7 @@ function AppContent() {
       <ConflictModal />
 
       <Toaster
-        position="bottom-right"
+        position="top-center"
         toastOptions={{
           className: 'dark:bg-gray-800 dark:text-gray-100',
           duration: 4000,
