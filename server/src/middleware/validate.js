@@ -1,6 +1,7 @@
 'use strict';
 
 const { body, query, validationResult } = require('express-validator');
+const { canonicalizeEmail } = require('../utils/email');
 
 /**
  * Middleware to check express-validator results and return 422 on failure.
@@ -23,13 +24,13 @@ function handleValidation(req, res, next) {
 /** Validators for POST /auth/signup */
 const signupValidators = [
   body('name').trim().notEmpty().withMessage('Name is required'),
-  body('email').isEmail().normalizeEmail().withMessage('Valid email is required'),
+  body('email').isEmail().bail().customSanitizer(canonicalizeEmail).withMessage('Valid email is required'),
   body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
 ];
 
 /** Validators for POST /auth/login */
 const loginValidators = [
-  body('email').isEmail().normalizeEmail().withMessage('Valid email is required'),
+  body('email').isEmail().bail().customSanitizer(canonicalizeEmail).withMessage('Valid email is required'),
   body('password').notEmpty().withMessage('Password is required'),
 ];
 
@@ -40,7 +41,7 @@ const workspaceValidators = [
 
 /** Validators for POST /workspaces/:id/members */
 const addMemberValidators = [
-  body('email').isEmail().normalizeEmail().withMessage('Valid email is required'),
+  body('email').isEmail().bail().customSanitizer(canonicalizeEmail).withMessage('Valid email is required'),
 ];
 
 /** Validators for POST /folders */

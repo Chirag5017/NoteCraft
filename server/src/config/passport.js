@@ -3,10 +3,7 @@
 const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const User = require('../models/user.model');
-
-function normalizeEmail(email) {
-  return email && email.trim().toLowerCase();
-}
+const { canonicalizeEmail } = require('../utils/email');
 
 /**
  * Configure Passport Google OAuth 2.0 strategy.
@@ -26,7 +23,7 @@ if (
       },
       async (accessToken, refreshToken, profile, done) => {
         try {
-          const email = normalizeEmail(profile.emails?.[0]?.value);
+          const email = canonicalizeEmail(profile.emails?.[0]?.value);
           if (!email) {
             return done(new Error('Google account did not provide an email'), null);
           }

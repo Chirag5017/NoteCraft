@@ -3,12 +3,9 @@
 const bcrypt = require('bcrypt');
 const User = require('../models/user.model');
 const { signToken } = require('../utils/jwt');
+const { canonicalizeEmail } = require('../utils/email');
 
 const SALT_ROUNDS = 12;
-
-function normalizeEmail(email) {
-  return email && email.trim().toLowerCase();
-}
 
 /**
  * POST /api/auth/signup
@@ -19,7 +16,7 @@ function normalizeEmail(email) {
 async function signup(req, res) {
   try {
     const { name, password } = req.body;
-    const email = normalizeEmail(req.body.email);
+    const email = canonicalizeEmail(req.body.email);
 
     const existing = await User.findOne({ email });
     if (existing) {
@@ -45,7 +42,7 @@ async function signup(req, res) {
 async function login(req, res) {
   try {
     const { password } = req.body;
-    const email = normalizeEmail(req.body.email);
+    const email = canonicalizeEmail(req.body.email);
 
     const user = await User.findOne({ email }).select('+passwordHash');
     if (!user || !user.passwordHash) {
