@@ -19,6 +19,23 @@ const {
 
 const router = express.Router();
 
+function isGoogleOAuthConfigured() {
+  return Boolean(
+    process.env.GOOGLE_CLIENT_ID &&
+    process.env.GOOGLE_CLIENT_SECRET &&
+    process.env.GOOGLE_CALLBACK_URL &&
+    !process.env.GOOGLE_CLIENT_ID.includes('your_') &&
+    !process.env.GOOGLE_CLIENT_SECRET.includes('your_')
+  );
+}
+
+function requireGoogleOAuthConfig(_req, res, next) {
+  if (isGoogleOAuthConfigured()) return next();
+
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+  return res.redirect(`${frontendUrl}/login?error=google_oauth_not_configured`);
+}
+
 // POST /api/auth/signup
 router.post('/signup', authLimiter, signupValidators, handleValidation, signup);
 
@@ -34,12 +51,14 @@ router.post('/logout', authenticate, logout);
 // GET /api/auth/google
 router.get(
   '/google',
+  requireGoogleOAuthConfig,
   passport.authenticate('google', { scope: ['profile', 'email'], session: false })
 );
 
 // GET /api/auth/google/callback
 router.get(
   '/google/callback',
+  requireGoogleOAuthConfig,
   passport.authenticate('google', { failureRedirect: `${process.env.FRONTEND_URL}/login?error=oauth_failed`, session: false }),
   googleCallback
 );

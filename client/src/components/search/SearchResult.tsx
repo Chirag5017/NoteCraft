@@ -1,5 +1,4 @@
 import { FileText, FolderOpen } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
 import { cn } from '@/utils/cn';
 import type { SearchResult as SearchResultType } from '@/types';
 

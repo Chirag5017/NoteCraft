@@ -17,7 +17,7 @@ import { OfflineBanner } from '@/components/sync/OfflineBanner';
 import { ConflictModal } from '@/components/sync/ConflictModal';
 import { useAppSelector, selectIsDarkMode, selectIsAuthenticated } from '@/store';
 import { useAppDispatch } from '@/store';
-import { setUser } from '@/store/authSlice';
+import { setToken, setUser } from '@/store/authSlice';
 import { useGetMeQuery } from '@/store/api';
 import { useOfflineSync } from '@/hooks/useOfflineSync';
 import { useSocket } from '@/hooks/useSocket';
@@ -46,6 +46,26 @@ function SessionRestorer() {
   return null;
 }
 
+/** Capture the JWT returned from the backend Google OAuth callback */
+function OAuthTokenHandler() {
+  const dispatch = useAppDispatch();
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token');
+    if (!token) return;
+
+    dispatch(setToken(token));
+    params.delete('token');
+
+    const nextSearch = params.toString();
+    const nextUrl = `/dashboard${nextSearch ? `?${nextSearch}` : ''}${window.location.hash}`;
+    window.history.replaceState({}, document.title, nextUrl);
+  }, [dispatch]);
+
+  return null;
+}
+
 function AppContent() {
   const isDarkMode = useAppSelector(selectIsDarkMode);
 
@@ -62,6 +82,7 @@ function AppContent() {
 
   return (
     <ErrorBoundary>
+      <OAuthTokenHandler />
       <SessionRestorer />
       <OfflineBanner />
       <Routes>

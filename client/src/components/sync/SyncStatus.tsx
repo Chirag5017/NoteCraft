@@ -1,4 +1,4 @@
-import { RefreshCw, Check } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import { useAppSelector, selectIsSyncing } from '@/store';
 
 export function SyncStatus() {

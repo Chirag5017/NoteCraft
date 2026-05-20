@@ -1,4 +1,3 @@
-import { useNavigate } from 'react-router-dom';
 import { FolderOpen } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { useAppSelector, selectUser } from '@/store';

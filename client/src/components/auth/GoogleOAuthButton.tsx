@@ -1,14 +1,7 @@
 export function GoogleOAuthButton() {
   const handleGoogleLogin = () => {
-    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-    const redirectUri = `${window.location.origin}/auth/google/callback`;
-    const scope = 'openid email profile';
-    const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
-    url.searchParams.set('client_id', clientId);
-    url.searchParams.set('redirect_uri', redirectUri);
-    url.searchParams.set('response_type', 'code');
-    url.searchParams.set('scope', scope);
-    window.location.href = url.toString();
+    const apiUrl = import.meta.env.VITE_API_URL.replace(/\/$/, '');
+    window.location.href = `${apiUrl}/auth/google`;
   };
 
   return (

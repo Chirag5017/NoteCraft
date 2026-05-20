@@ -23,7 +23,8 @@ cp .env.example .env.local
 |---|---|
 | `VITE_API_URL` | Backend REST API base URL (e.g. `http://localhost:4000/api`) |
 | `VITE_SOCKET_URL` | Socket.IO server URL (e.g. `http://localhost:4000`) |
-| `VITE_GOOGLE_CLIENT_ID` | Google OAuth 2.0 client ID |
+
+Google OAuth is initiated through the backend at `/api/auth/google`; configure `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_CALLBACK_URL` in the server environment.
 
 ### 3. Run the development server
 

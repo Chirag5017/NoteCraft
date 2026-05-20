@@ -46,7 +46,7 @@ export function useCollaboration(
         socket.auth = {};
         socket.connect();
       } else {
-        const token = localStorage.getItem('token') ?? '';
+        const token = localStorage.getItem('notecraft_token') ?? '';
         connectSocket(token);
       }
     }
