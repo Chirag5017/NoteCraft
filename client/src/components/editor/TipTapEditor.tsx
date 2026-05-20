@@ -8,14 +8,29 @@ import Color from '@tiptap/extension-color';
 import Highlight from '@tiptap/extension-highlight';
 import Image from '@tiptap/extension-image';
 import { Extension } from '@tiptap/core';
+import { CollaborationCursorsExtension } from '@/components/editor/CollaborationCursorsExtension';
 import type { Collaborator } from '@/types';
 
 interface TipTapEditorProps {
   noteId: string;
-  initialContent: string;
+  /** undefined = parent still fetching; do not initialize or emit */
+  initialContent?: string;
   onChange: (content: string) => void;
   onEditorReady?: (editor: Editor) => void;
+  /** Called once after persisted content is applied to the editor */
+  onEditorHydrated?: () => void;
+  /**
+   * Register a function the parent can call to push remote content into the editor.
+   * The registered function receives (content: string, title: string).
+   * It must NOT trigger onChange (to avoid save loops).
+   */
+  onRegisterRemoteUpdater?: (updater: (content: string, title: string) => void) => void;
+  /** Remote users in this note (carets rendered in-editor) */
   collaborators?: Collaborator[];
+  /** This client's session id — used to hide own caret decoration */
+  sessionId?: string;
+  /** Emits ProseMirror selection positions for live cursor sync */
+  onCursorChange?: (anchor: number, head: number) => void;
   isReadOnly?: boolean;
 }
 
@@ -138,10 +153,20 @@ export function TipTapEditor({
   initialContent,
   onChange,
   onEditorReady,
+  onEditorHydrated,
+  onRegisterRemoteUpdater,
+  collaborators = [],
+  sessionId = '',
+  onCursorChange,
   isReadOnly = false,
 }: TipTapEditorProps) {
   const initialised = useRef(false);
   const prevNoteIdRef = useRef('');
+  const skipNextUpdateRef = useRef(true);
+  const onCursorChangeRef = useRef(onCursorChange);
+  onCursorChangeRef.current = onCursorChange;
+  // Flag to suppress onChange during remote updates (avoid save loop)
+  const isApplyingRemoteRef = useRef(false);
 
   const editor = useEditor({
     extensions: [
@@ -155,13 +180,32 @@ export function TipTapEditor({
       Highlight.configure({ multicolor: true }),
       Image.configure({ inline: false, allowBase64: false }),
       ExitOnEnter,
+      CollaborationCursorsExtension,
     ],
     content: '<p></p>',
     editable: !isReadOnly,
     onUpdate: ({ editor: e }) => {
+      if (isApplyingRemoteRef.current) return;
+      // TipTap fires onUpdate on create; ignore until real content is hydrated
+      if (skipNextUpdateRef.current) return;
       onChange(e.getHTML());
     },
+    onSelectionUpdate: ({ editor: e }) => {
+      if (isApplyingRemoteRef.current || skipNextUpdateRef.current || isReadOnly) return;
+      const { from, to } = e.state.selection;
+      onCursorChangeRef.current?.(from, to);
+    },
   });
+
+  // Paint remote collaborator carets + name tags
+  useEffect(() => {
+    if (!editor) return;
+    const storage = editor.storage.collaborationCursors;
+    if (!storage) return;
+    storage.collaborators = collaborators;
+    storage.sessionId = sessionId;
+    editor.view.dispatch(editor.state.tr);
+  }, [editor, collaborators, sessionId]);
 
   // Load content when noteId changes or initialContent arrives
   useEffect(() => {
@@ -171,22 +215,27 @@ export function TipTapEditor({
     if (noteChanged) {
       prevNoteIdRef.current = noteId;
       initialised.current = false;
+      skipNextUpdateRef.current = true;
     }
 
     if (initialised.current) return;
-    if (!initialContent) return;
+    if (initialContent === undefined) return;
 
     const content = parseContent(initialContent);
     const t = setTimeout(() => {
+      isApplyingRemoteRef.current = true;
       try {
-        editor.commands.setContent(content, false);
+        editor.commands.setContent(content || '<p></p>', false);
       } catch {
         editor.commands.setContent('<p></p>', false);
       }
       initialised.current = true;
+      skipNextUpdateRef.current = false;
+      isApplyingRemoteRef.current = false;
+      onEditorHydrated?.();
     }, 20);
     return () => clearTimeout(t);
-  }, [editor, noteId, initialContent]);
+  }, [editor, noteId, initialContent, onEditorHydrated]);
 
   // Expose editor to parent (toolbar)
   useEffect(() => {
@@ -196,6 +245,35 @@ export function TipTapEditor({
   useEffect(() => {
     editor?.setEditable(!isReadOnly);
   }, [editor, isReadOnly]);
+
+  // Register a remote updater so remote content changes update the editor without triggering save
+  useEffect(() => {
+    if (!editor || !onRegisterRemoteUpdater) return;
+
+    const applyRemoteContent = (content: string, _title: string) => {
+      if (!editor) return;
+      const parsed = parseContent(content);
+      // Save cursor position before applying
+      const { from, to } = editor.state.selection;
+      isApplyingRemoteRef.current = true;
+      try {
+        skipNextUpdateRef.current = true;
+        editor.commands.setContent(parsed || '<p></p>', false);
+        skipNextUpdateRef.current = false;
+        // Restore cursor within bounds
+        const docSize = editor.state.doc.content.size;
+        const safeFrom = Math.min(from, Math.max(1, docSize - 1));
+        const safeTo = Math.min(to, Math.max(1, docSize - 1));
+        if (safeFrom > 0 && safeFrom <= docSize - 1) {
+          editor.commands.setTextSelection({ from: safeFrom, to: safeTo });
+        }
+      } finally {
+        isApplyingRemoteRef.current = false;
+      }
+    };
+
+    onRegisterRemoteUpdater(applyRemoteContent);
+  }, [editor, onRegisterRemoteUpdater]);
 
   return (
     <div className="flex-1 bg-white dark:bg-gray-950">

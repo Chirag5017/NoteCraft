@@ -6,8 +6,9 @@ const { registerNoteRoomHandlers } = require('./noteRoom');
 
 /**
  * Initialize Socket.IO server on the given HTTP server.
- * @param {import('http').Server} httpServer - The HTTP server instance
- * @returns {import('socket.io').Server} The Socket.IO server instance
+ * Supports both authenticated users (JWT) and anonymous public viewers.
+ * @param {import('http').Server} httpServer
+ * @returns {import('socket.io').Server}
  */
 function initSocketIO(httpServer) {
   const io = new Server(httpServer, {
@@ -17,22 +18,33 @@ function initSocketIO(httpServer) {
     },
   });
 
-  // JWT authentication middleware
+  // Auth middleware — allow anonymous connections for public note access
   io.use((socket, next) => {
     try {
       const token = socket.handshake.auth && socket.handshake.auth.token;
+
       if (!token) {
-        return next(new Error('Authentication error: no token provided'));
+        // Anonymous viewer — assign a guest identity
+        socket.userId = null;
+        socket.isAnonymous = true;
+        // Use a random guest ID so presence tracking works
+        socket.guestId = `guest_${Math.random().toString(36).slice(2, 10)}`;
+        return next();
       }
+
       const decoded = verifyToken(token);
       socket.userId = decoded.userId;
+      socket.isAnonymous = false;
       next();
     } catch (err) {
-      next(new Error('Authentication error: invalid token'));
+      // Invalid token — treat as anonymous rather than rejecting
+      socket.userId = null;
+      socket.isAnonymous = true;
+      socket.guestId = `guest_${Math.random().toString(36).slice(2, 10)}`;
+      next();
     }
   });
 
-  // Register connection handler
   io.on('connection', (socket) => {
     registerNoteRoomHandlers(io, socket);
   });

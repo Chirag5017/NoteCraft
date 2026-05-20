@@ -1,6 +1,6 @@
-import { useState } from 'react';
-import toast from "react-hot-toast";
-import { Modal } from '@/components/ui/Modal';
+import { useState, useEffect } from 'react';
+import { X } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { Button } from '@/components/ui/Button';
 import { useAppDispatch, useAppSelector, selectConflicts } from '@/store';
 import { clearConflicts, setSyncing, setOffline } from '@/store/uiSlice';
@@ -8,6 +8,7 @@ import { useUpdateNoteMutation } from '@/store/api';
 import { db } from '@/lib/db';
 import { formatFullDate } from '@/utils/formatDate';
 import type { ConflictItem } from '@/types';
+import { cn } from '@/utils/cn';
 
 export function ConflictModal() {
   const dispatch = useAppDispatch();
@@ -18,13 +19,38 @@ export function ConflictModal() {
 
   const isOpen = conflicts.length > 0;
 
+  // Lock body scroll while open — and always restore on unmount/close
+  useEffect(() => {
+    if (!isOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [isOpen]);
+
+  // Reset selections when new conflicts arrive
+  useEffect(() => {
+    setSelections({});
+  }, [conflicts]);
+
+  if (!isOpen) return null;
+
   const handleSelect = (noteId: string, version: 'local' | 'server') => {
     setSelections(prev => ({ ...prev, [noteId]: version }));
   };
 
-  const allResolved = conflicts.every(c => selections[c.noteId]);
+  const allResolved = conflicts.length > 0 && conflicts.every(c => selections[c.noteId]);
+
+  const handleDismiss = () => {
+    // Allow dismissing without resolving — mark all as server version to unblock
+    dispatch(clearConflicts());
+    dispatch(setSyncing(false));
+    dispatch(setOffline(false));
+  };
 
   const handleConfirm = async () => {
+    if (!allResolved) return;
     setIsResolving(true);
     try {
       await Promise.all(
@@ -34,19 +60,24 @@ export function ConflictModal() {
               ? conflict.localVersion
               : conflict.serverVersion;
 
-          // Save to API
+          const noteId = chosen.id ?? conflict.noteId;
+
+          // Save chosen version to API
           await updateNote({
-            id: chosen.id,
+            id: noteId,
             title: chosen.title,
             content: chosen.content,
           }).unwrap();
 
-          // Save to IDB
-          await db.notes.put(chosen);
-          await db.syncQueue
+          // Update IDB with chosen version
+          await db.notes.put({ ...chosen, id: noteId });
+
+          // Clear this note from the sync queue
+          const queueItems = await db.syncQueue
             .where('noteId')
-            .equals(chosen.id)
-            .delete();
+            .equals(noteId)
+            .toArray();
+          await db.syncQueue.bulkDelete(queueItems.map(q => q.id!));
         })
       );
 
@@ -55,71 +86,104 @@ export function ConflictModal() {
       dispatch(setOffline(false));
       toast.success('Conflicts resolved');
     } catch {
-      toast.error('Failed to resolve conflicts');
+      toast.error('Failed to resolve some conflicts — please try again');
     } finally {
       setIsResolving(false);
     }
   };
 
   return (
-    <Modal
-      isOpen={isOpen}
-      onClose={() => {}} // Cannot close without resolving
-      title={`Resolve ${conflicts.length} Conflict${conflicts.length !== 1 ? 's' : ''}`}
-      size="xl"
+    // Portal-style fixed overlay — rendered independently of Modal component
+    // to avoid the body-overflow cleanup race condition
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="conflict-modal-title"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
     >
-      <div className="space-y-6">
-        <p className="text-sm text-gray-600 dark:text-gray-400">
-          The following notes have conflicting changes. Select which version to keep for each note.
-        </p>
+      {/* Backdrop — clicking it does NOT dismiss (conflicts must be resolved) */}
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" aria-hidden="true" />
 
-        <div className="space-y-6 max-h-96 overflow-y-auto">
+      {/* Panel */}
+      <div className="relative w-full max-w-2xl rounded-xl bg-white dark:bg-gray-900 dark:border dark:border-gray-800 shadow-2xl animate-fade-in flex flex-col max-h-[90vh]">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-gray-200 dark:border-gray-800 px-6 py-4 shrink-0">
+          <div>
+            <h2 id="conflict-modal-title" className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+              Resolve {conflicts.length} Conflict{conflicts.length !== 1 ? 's' : ''}
+            </h2>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+              Select which version to keep for each note
+            </p>
+          </div>
+          <button
+            onClick={handleDismiss}
+            aria-label="Dismiss conflicts"
+            className="rounded-lg p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 dark:hover:text-gray-200 transition-colors"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {/* Scrollable body */}
+        <div className="overflow-y-auto flex-1 px-6 py-4 space-y-6">
           {conflicts.map(conflict => (
             <div key={conflict.noteId} className="space-y-3">
-              <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                {conflict.localVersion.title || 'Untitled'}
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-amber-400 shrink-0" />
+                {conflict.localVersion?.title || conflict.serverVersion?.title || 'Untitled'}
               </h3>
 
               <div className="grid grid-cols-2 gap-3">
                 {/* Local version */}
                 <button
+                  type="button"
                   onClick={() => handleSelect(conflict.noteId, 'local')}
                   aria-pressed={selections[conflict.noteId] === 'local'}
-                  className={`text-left p-3 rounded-lg border-2 transition-colors ${
+                  className={cn(
+                    'text-left p-3 rounded-xl border-2 transition-all duration-150',
                     selections[conflict.noteId] === 'local'
-                      ? 'border-brand-500 bg-brand-50 dark:bg-brand-900/20'
+                      ? 'border-brand-500 bg-brand-50 dark:bg-brand-900/20 shadow-sm'
                       : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
-                  }`}
+                  )}
                 >
-                  <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1">
-                    Your version
+                  <p className="text-xs font-semibold text-brand-600 dark:text-brand-400 mb-1">
+                    Your version (local)
                   </p>
                   <p className="text-xs text-gray-400 dark:text-gray-600 mb-2">
-                    {formatFullDate(conflict.localVersion.updatedAt)}
+                    {conflict.localVersion?.updatedAt
+                      ? formatFullDate(conflict.localVersion.updatedAt)
+                      : 'Unknown time'}
                   </p>
-                  <p className="text-sm text-gray-700 dark:text-gray-300 line-clamp-4 font-mono text-xs">
-                    {conflict.localVersion.content.slice(0, 200)}...
+                  <p className="text-xs text-gray-700 dark:text-gray-300 line-clamp-5 font-mono leading-relaxed break-all">
+                    {(conflict.localVersion?.content ?? '').slice(0, 300)}
+                    {(conflict.localVersion?.content ?? '').length > 300 ? '…' : ''}
                   </p>
                 </button>
 
                 {/* Server version */}
                 <button
+                  type="button"
                   onClick={() => handleSelect(conflict.noteId, 'server')}
                   aria-pressed={selections[conflict.noteId] === 'server'}
-                  className={`text-left p-3 rounded-lg border-2 transition-colors ${
+                  className={cn(
+                    'text-left p-3 rounded-xl border-2 transition-all duration-150',
                     selections[conflict.noteId] === 'server'
-                      ? 'border-brand-500 bg-brand-50 dark:bg-brand-900/20'
+                      ? 'border-brand-500 bg-brand-50 dark:bg-brand-900/20 shadow-sm'
                       : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
-                  }`}
+                  )}
                 >
-                  <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1">
+                  <p className="text-xs font-semibold text-violet-600 dark:text-violet-400 mb-1">
                     Server version
                   </p>
                   <p className="text-xs text-gray-400 dark:text-gray-600 mb-2">
-                    {formatFullDate(conflict.serverVersion.updatedAt)}
+                    {conflict.serverVersion?.updatedAt
+                      ? formatFullDate(conflict.serverVersion.updatedAt)
+                      : 'Unknown time'}
                   </p>
-                  <p className="text-sm text-gray-700 dark:text-gray-300 line-clamp-4 font-mono text-xs">
-                    {conflict.serverVersion.content.slice(0, 200)}...
+                  <p className="text-xs text-gray-700 dark:text-gray-300 line-clamp-5 font-mono leading-relaxed break-all">
+                    {(conflict.serverVersion?.content ?? '').slice(0, 300)}
+                    {(conflict.serverVersion?.content ?? '').length > 300 ? '…' : ''}
                   </p>
                 </button>
               </div>
@@ -127,16 +191,28 @@ export function ConflictModal() {
           ))}
         </div>
 
-        <div className="flex justify-end gap-2 pt-2 border-t border-gray-200 dark:border-gray-800">
-          <Button
-            onClick={handleConfirm}
-            isLoading={isResolving}
-            disabled={!allResolved}
-          >
-            Confirm resolution
-          </Button>
+        {/* Footer */}
+        <div className="flex items-center justify-between gap-3 px-6 py-4 border-t border-gray-200 dark:border-gray-800 shrink-0 bg-gray-50 dark:bg-gray-900/50 rounded-b-xl">
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            {Object.keys(selections).length}/{conflicts.length} selected
+          </p>
+          <div className="flex gap-2">
+            <Button variant="ghost" size="sm" onClick={handleDismiss}>
+              Skip for now
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={handleConfirm}
+              isLoading={isResolving}
+              disabled={!allResolved || isResolving}
+              aria-label="Confirm conflict resolution"
+            >
+              Confirm resolution
+            </Button>
+          </div>
         </div>
       </div>
-    </Modal>
+    </div>
   );
 }

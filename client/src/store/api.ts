@@ -4,6 +4,7 @@ import type {
   Workspace,
   Folder,
   Note,
+  PublicNote,
   SearchResult,
   AuthResponse,
   SignupPayload,
@@ -104,7 +105,19 @@ export const api = createApi({
     }),
     updateNote: builder.mutation<Note, UpdateNotePayload>({
       query: ({ id, ...body }) => ({ url: `/notes/${id}`, method: 'PATCH', body }),
-      invalidatesTags: (_result, _error, { id }) => [{ type: 'Note', id }, 'Note'],
+      // Patch cache in place — avoid refetching getNote (was causing save-status flicker)
+      async onQueryStarted({ id, ...body }, { dispatch, queryFulfilled }) {
+        const patchResult = dispatch(
+          api.util.updateQueryData('getNote', id, draft => {
+            Object.assign(draft, body);
+          })
+        );
+        try {
+          await queryFulfilled;
+        } catch {
+          patchResult.undo();
+        }
+      },
     }),
     deleteNote: builder.mutation<void, string>({
       query: id => ({ url: `/notes/${id}`, method: 'DELETE' }),
@@ -118,6 +131,19 @@ export const api = createApi({
     syncNotes: builder.mutation<SyncResponse, SyncPayload>({
       query: body => ({ url: '/notes/sync', method: 'POST', body }),
       invalidatesTags: ['Note'],
+    }),
+
+    // Public link sharing
+    getPublicNote: builder.query<PublicNote, string>({
+      query: token => `/notes/public/${token}`,
+    }),
+    shareNote: builder.mutation<{ shareToken: string; sharePermission: 'view' | 'edit' }, { id: string; permission: 'view' | 'edit' }>({
+      query: ({ id, permission }) => ({ url: `/notes/${id}/share`, method: 'POST', body: { permission } }),
+      invalidatesTags: (_r, _e, { id }) => [{ type: 'Note', id }],
+    }),
+    unshareNote: builder.mutation<void, string>({
+      query: id => ({ url: `/notes/${id}/share`, method: 'DELETE' }),
+      invalidatesTags: (_r, _e, id) => [{ type: 'Note', id }],
     }),
   }),
 });
@@ -141,4 +167,7 @@ export const {
   useDeleteNoteMutation,
   useSearchNotesQuery,
   useSyncNotesMutation,
+  useGetPublicNoteQuery,
+  useShareNoteMutation,
+  useUnshareNoteMutation,
 } = api;

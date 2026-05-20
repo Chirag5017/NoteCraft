@@ -7,9 +7,15 @@ class NoteCraftDB extends Dexie {
 
   constructor() {
     super('NoteCraftDB');
+    // v1: original schema with needsSync index (caused boolean query issues)
     this.version(1).stores({
       notes: 'id, folderId, workspaceId, updatedAt',
       syncQueue: '++id, noteId, needsSync',
+    });
+    // v2: drop needsSync index — filter in JS instead (boolean indexes are unreliable in IndexedDB)
+    this.version(2).stores({
+      notes: 'id, folderId, workspaceId, updatedAt',
+      syncQueue: '++id, noteId',
     });
   }
 }

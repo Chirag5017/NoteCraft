@@ -40,6 +40,17 @@ export interface Note {
   createdBy: string;
   updatedAt: string;
   createdAt: string;
+  isShared?: boolean;
+  sharePermission?: 'view' | 'edit';
+}
+
+export interface PublicNote {
+  id: string;
+  title: string;
+  content: string;
+  sharePermission: 'view' | 'edit';
+  updatedAt: string;
+  createdAt: string;
 }
 
 export interface SyncQueueItem {

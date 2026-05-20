@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { LandingPage } from '@/pages/LandingPage';
+import { SharedNotePage } from '@/pages/SharedNotePage';
 import { LoginPage } from '@/pages/LoginPage';
 import { SignupPage } from '@/pages/SignupPage';
 import { DashboardPage } from '@/pages/DashboardPage';
@@ -105,6 +106,9 @@ function AppContent() {
         {/* Landing page — public */}
         <Route path="/" element={<LandingPage />} />
 
+        {/* Public shared note — no auth required */}
+        <Route path="/shared/:token" element={<SharedNotePage />} />
+
         {/* 404 */}
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
@@ -114,7 +118,7 @@ function AppContent() {
       <ConflictModal />
 
       <Toaster
-        position="top-center"
+        position="bottom-right"
         toastOptions={{
           className: 'dark:bg-gray-800 dark:text-gray-100',
           duration: 4000,

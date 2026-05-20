@@ -1,19 +1,20 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Hash, Users } from 'lucide-react';
+import { ArrowLeft, Hash, Link2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { TipTapEditor } from '@/components/editor/TipTapEditor';
 import { Toolbar } from '@/components/editor/Toolbar';
 import { PresenceBar } from '@/components/editor/PresenceBar';
 import { AutoSaveIndicator } from '@/components/note/AutoSaveIndicator';
-import { MembersModal } from '@/components/workspace/MembersModal';
-import { Skeleton } from '@/components/ui/Skeleton';
+// import { MembersModal } from '@/components/workspace/MembersModal';
+import { ShareNoteModal } from '@/components/note/ShareNoteModal';import { Skeleton } from '@/components/ui/Skeleton';
 import { useGetNoteQuery, useUpdateNoteMutation, useGetWorkspacesQuery } from '@/store/api';
 import { useAppDispatch, useAppSelector, selectIsOffline, selectSaveStatus, selectUser } from '@/store';
 import { setSaveStatus, setActiveNote } from '@/store/noteSlice';
 import { useCollaboration } from '@/hooks/useCollaboration';
 import { useDebounce } from '@/hooks/useDebounce';
 import { db } from '@/lib/db';
+import { isBlankHtml } from '@/utils/noteContent';
 import type { Editor } from '@tiptap/react';
 import type { Note } from '@/types';
 
@@ -30,8 +31,8 @@ export function NoteEditorPage() {
   const [wordCount, setWordCount] = useState(0);
   const [charCount, setCharCount] = useState(0);
   const [editorInstance, setEditorInstance] = useState<Editor | null>(null);
-  const [isMembersOpen, setIsMembersOpen] = useState(false);
-  // The resolved note — either from server or from IDB when offline
+  // const [isMembersOpen, setIsMembersOpen] = useState(false);
+  const [isShareOpen, setIsShareOpen] = useState(false);  // The resolved note — either from server or from IDB when offline
   const [resolvedNote, setResolvedNote] = useState<Note | null>(null);
 
   const debouncedContent = useDebounce(content, 1500);
@@ -39,6 +40,14 @@ export function NoteEditorPage() {
 
   const userEditedRef = useRef(false);
   const contentLoadedRef = useRef(false);
+  /** Blocks note-change until editor finished loading (prevents mount empty broadcast) */
+  const isHydratingRef = useRef(true);
+  /** Skip one autosave cycle after remote/collaborator content is applied */
+  const skipNextAutosaveRef = useRef(false);
+  const lastSavedContentRef = useRef('');
+  const lastSavedTitleRef = useRef('');
+  const activeNoteIdRef = useRef(noteId);
+  activeNoteIdRef.current = noteId;
 
   const {
     data: serverNote,
@@ -54,28 +63,47 @@ export function NoteEditorPage() {
   const isOwner = workspace?.ownerId === currentUser?.id;
 
   const [updateNote] = useUpdateNoteMutation();
-  const { collaborators } = useCollaboration(noteId);
+  const {
+    collaborators,
+    sessionId,
+    isReadOnly: collabReadOnly,
+    setOnRemoteContent,
+    broadcastChange,
+    broadcastCursor,
+  } = useCollaboration(noteId);
+
+  const cursorTimerRef = useRef<ReturnType<typeof setTimeout>>();
 
   // Reset when noteId changes
   useEffect(() => {
     userEditedRef.current = false;
     contentLoadedRef.current = false;
+    isHydratingRef.current = true;
     setTitle('');
     setContent('');
     setWordCount(0);
     setCharCount(0);
     setResolvedNote(null);
+    lastSavedContentRef.current = '';
+    lastSavedTitleRef.current = '';
     dispatch(setSaveStatus('saved'));
+    return () => clearTimeout(cursorTimerRef.current);
   }, [noteId, dispatch]);
 
-  // When server note arrives — use it
+  // When server note arrives — only for the active noteId (avoid stale RTK cache)
   useEffect(() => {
-    if (!serverNote) return;
+    if (!serverNote || serverNote.id !== noteId) return;
     setResolvedNote(serverNote);
-    setTitle(serverNote.title);
-    setContent(serverNote.content || '');
+    // Do not overwrite local edits when refetch runs after autosave
+    if (!userEditedRef.current) {
+      const serverContent = serverNote.content || '';
+      setTitle(serverNote.title);
+      setContent(serverContent);
+      lastSavedContentRef.current = serverContent;
+      lastSavedTitleRef.current = serverNote.title;
+    }
     contentLoadedRef.current = true;
-  }, [serverNote]);
+  }, [serverNote, noteId]);
 
   // When server fetch fails (offline) — fall back to IndexedDB
   useEffect(() => {
@@ -84,7 +112,7 @@ export function NoteEditorPage() {
     const loadFromIDB = async () => {
       try {
         const cached = await db.notes.get(noteId);
-        if (cached) {
+        if (cached && cached.id === noteId) {
           setResolvedNote(cached);
           setTitle(cached.title);
           setContent(cached.content || '');
@@ -106,11 +134,27 @@ export function NoteEditorPage() {
     return () => { dispatch(setActiveNote(null)); };
   }, [noteId, dispatch]);
 
-  // Auto-save
+  // Auto-save (debounced) — only toggles status here, not on every keystroke
   useEffect(() => {
     if (!userEditedRef.current || !noteId) return;
 
+    if (skipNextAutosaveRef.current) {
+      skipNextAutosaveRef.current = false;
+      return;
+    }
+
+    if (
+      debouncedContent === lastSavedContentRef.current &&
+      debouncedTitle === lastSavedTitleRef.current
+    ) {
+      return;
+    }
+
+    const savingForNoteId = noteId;
+
     const save = async () => {
+      if (activeNoteIdRef.current !== savingForNoteId) return;
+
       dispatch(setSaveStatus('saving'));
 
       // Always write to IDB first (works offline too)
@@ -129,12 +173,18 @@ export function NoteEditorPage() {
         if (noteId) {
           await db.syncQueue.put({ noteId, needsSync: true });
         }
+        lastSavedContentRef.current = debouncedContent;
+        lastSavedTitleRef.current = debouncedTitle;
+        userEditedRef.current = false;
         dispatch(setSaveStatus('offline'));
         return;
       }
 
       try {
         await updateNote({ id: noteId, title: debouncedTitle, content: debouncedContent }).unwrap();
+        lastSavedContentRef.current = debouncedContent;
+        lastSavedTitleRef.current = debouncedTitle;
+        userEditedRef.current = false;
         dispatch(setSaveStatus('saved'));
       } catch {
         dispatch(setSaveStatus('error'));
@@ -143,8 +193,7 @@ export function NoteEditorPage() {
     };
 
     save();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedContent, debouncedTitle]);
+  }, [debouncedContent, debouncedTitle, noteId, isOffline, dispatch, updateNote]);
 
   // Ctrl/Cmd+S
   useEffect(() => {
@@ -175,6 +224,9 @@ export function NoteEditorPage() {
 
         try {
           await updateNote({ id: noteId, title, content }).unwrap();
+          lastSavedContentRef.current = content;
+          lastSavedTitleRef.current = title;
+          userEditedRef.current = false;
           dispatch(setSaveStatus('saved'));
           toast.success('Saved');
         } catch {
@@ -187,31 +239,72 @@ export function NoteEditorPage() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [noteId, title, content, resolvedNote, isOffline, dispatch, updateNote]);
 
-  const handleContentChange = useCallback((newContent: string) => {
-    // Always update content state — needed for correct save payload
-    setContent(newContent);
+  const handleEditorHydrated = useCallback(() => {
+    isHydratingRef.current = false;
+  }, []);
 
-    // Only mark as user-edited and trigger save after initial load
-    if (!contentLoadedRef.current) return;
+  const handleCursorChange = useCallback(
+    (anchor: number, head: number) => {
+      if (isHydratingRef.current || collabReadOnly) return;
+      clearTimeout(cursorTimerRef.current);
+      cursorTimerRef.current = setTimeout(() => {
+        broadcastCursor(anchor, head);
+      }, 80);
+    },
+    [broadcastCursor, collabReadOnly]
+  );
+
+  const handleContentChange = useCallback((newContent: string) => {
+    setContent(newContent);
+    if (!contentLoadedRef.current || isHydratingRef.current) return;
     userEditedRef.current = true;
-    dispatch(setSaveStatus('saving'));
+    skipNextAutosaveRef.current = false;
+
+    // Broadcast only real edits — never blank mount state
+    if (!isBlankHtml(newContent)) {
+      broadcastChange(newContent, title);
+    }
 
     const tmp = document.createElement('div');
     tmp.innerHTML = newContent;
     const text = tmp.textContent || '';
     setWordCount(text.trim() ? text.trim().split(/\s+/).length : 0);
     setCharCount(text.length);
-  }, [dispatch]);
+  }, [broadcastChange, title]);
 
   const handleTitleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!contentLoadedRef.current || isHydratingRef.current) return;
     userEditedRef.current = true;
-    setTitle(e.target.value);
-    dispatch(setSaveStatus('saving'));
-  }, [dispatch]);
+    skipNextAutosaveRef.current = false;
+    const newTitle = e.target.value;
+    setTitle(newTitle);
+    const html = editorInstance?.getHTML() ?? content;
+    if (!isBlankHtml(html)) {
+      broadcastChange(html, newTitle);
+    }
+  }, [broadcastChange, content, editorInstance]);
 
   const handleEditorReady = useCallback((editor: Editor) => {
     setEditorInstance(editor);
   }, []);
+
+  // Register the remote updater so content from other users updates the editor
+  const handleRegisterRemoteUpdater = useCallback((updater: (content: string, title: string) => void) => {
+    setOnRemoteContent((incomingContent: string, incomingTitle: string) => {
+      isHydratingRef.current = true;
+      skipNextAutosaveRef.current = true;
+      contentLoadedRef.current = true;
+      setContent(incomingContent);
+      if (incomingTitle) {
+        setTitle(prev => (incomingTitle !== prev ? incomingTitle : prev));
+      }
+      updater(incomingContent, incomingTitle);
+      // End hydration after snapshot/remote apply (next tick avoids mount onUpdate)
+      queueMicrotask(() => {
+        isHydratingRef.current = false;
+      });
+    });
+  }, [setOnRemoteContent]);
 
   // Show skeleton only on first load (not on offline fallback)
   if (isLoading && !resolvedNote) {
@@ -261,14 +354,16 @@ export function NoteEditorPage() {
             <span>{wordCount}w · {charCount}c</span>
           </div>
           {workspace && (
-            <button
-              onClick={() => setIsMembersOpen(true)}
-              aria-label="Share"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-indigo-600 hover:bg-indigo-700 text-white transition-colors"
-            >
-              <Users className="h-4 w-4" />
-              <span className="hidden sm:inline">Share</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setIsShareOpen(true)}
+                aria-label="Share this note"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-brand-600 hover:bg-brand-700 text-white transition-colors"
+              >
+                <Link2 className="h-4 w-4" />
+                <span className="hidden sm:inline">Share</span>
+              </button>
+            </div>
           )}
         </div>
       </div>
@@ -282,19 +377,30 @@ export function NoteEditorPage() {
       <div className="flex-1 overflow-auto bg-gray-100 dark:bg-gray-900">
         <div className="max-w-4xl mx-auto my-6 bg-white dark:bg-gray-950 shadow-md rounded-sm">
           <TipTapEditor
+            key={noteId}
             noteId={noteId}
-            initialContent={resolvedNote?.content ?? ''}
+            initialContent={
+              resolvedNote && resolvedNote.id === noteId
+                ? (resolvedNote.content ?? '')
+                : undefined
+            }
             onChange={handleContentChange}
             onEditorReady={handleEditorReady}
+            onEditorHydrated={handleEditorHydrated}
+            onRegisterRemoteUpdater={handleRegisterRemoteUpdater}
+            onCursorChange={handleCursorChange}
             collaborators={collaborators}
+            sessionId={sessionId}
+            isReadOnly={collabReadOnly}
           />
         </div>
       </div>
 
-      {workspace && (
-        <MembersModal
-          isOpen={isMembersOpen}
-          onClose={() => setIsMembersOpen(false)}
+      {workspace && resolvedNote && (
+        <ShareNoteModal
+          isOpen={isShareOpen}
+          onClose={() => setIsShareOpen(false)}
+          note={resolvedNote}
           workspace={workspace}
           isOwner={isOwner}
         />

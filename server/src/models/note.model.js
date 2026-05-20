@@ -11,6 +11,10 @@ const noteSchema = new mongoose.Schema(
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     yjsState: { type: Buffer },
+    // Public link sharing
+    shareToken: { type: String, default: null, index: true, sparse: true },
+    sharePermission: { type: String, enum: ['view', 'edit'], default: 'view' },
+    isShared: { type: Boolean, default: false },
   },
   {
     timestamps: true,
@@ -24,6 +28,9 @@ const noteSchema = new mongoose.Schema(
         delete ret._id;
         delete ret.__v;
         delete ret.yjsState;
+        // Only expose shareToken when explicitly needed — strip from default serialization
+        // (the share endpoint returns it directly)
+        delete ret.shareToken;
         return ret;
       },
     },

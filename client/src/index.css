@@ -31,7 +31,19 @@
     content: attr(data-placeholder);
   }
 
-  /* Collaborator cursor */
+  /* Google Docs–style remote collaborator caret + name tag */
+  .collaboration-cursor {
+    position: relative;
+    display: inline-block;
+    width: 0;
+    height: 1.25em;
+    margin-left: -1px;
+    margin-right: -1px;
+    pointer-events: none;
+    vertical-align: text-bottom;
+    word-break: normal;
+  }
+
   .collaboration-cursor__caret {
     border-left: 1px solid;
     border-right: 1px solid;

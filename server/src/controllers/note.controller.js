@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('crypto');
 const Note = require('../models/note.model');
 const Workspace = require('../models/workspace.model');
 const Folder = require('../models/folder.model');
@@ -269,4 +270,88 @@ async function sync(req, res) {
   }
 }
 
-module.exports = { create, list, search, getOne, update, remove, sync };
+module.exports = { create, list, search, getOne, update, remove, sync, share, unshare, getPublic };
+
+/**
+ * POST /api/notes/:id/share
+ * Generate (or return existing) share token for a note.
+ * Body: { permission: 'view' | 'edit' }
+ * Only the workspace owner or note creator can share.
+ */
+async function share(req, res) {
+  try {
+    const note = await Note.findById(req.params.id);
+    if (!note) return res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' });
+
+    const hasAccess = await verifyWorkspaceMembership(note.workspaceId.toString(), req.userId);
+    if (!hasAccess) return res.status(403).json({ error: 'Forbidden', code: 'FORBIDDEN' });
+
+    const permission = req.body.permission === 'edit' ? 'edit' : 'view';
+
+    // Generate a new token if none exists, or if permission changed
+    let token = note.shareToken;
+    if (!token || note.sharePermission !== permission) {
+      token = crypto.randomBytes(32).toString('hex');
+    }
+
+    await Note.findByIdAndUpdate(req.params.id, {
+      shareToken: token,
+      sharePermission: permission,
+      isShared: true,
+    });
+
+    return res.status(200).json({ shareToken: token, sharePermission: permission });
+  } catch (err) {
+    console.error('Note share error:', err.message);
+    return res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
+  }
+}
+
+/**
+ * DELETE /api/notes/:id/share
+ * Revoke the share link for a note.
+ */
+async function unshare(req, res) {
+  try {
+    const note = await Note.findById(req.params.id);
+    if (!note) return res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' });
+
+    const hasAccess = await verifyWorkspaceMembership(note.workspaceId.toString(), req.userId);
+    if (!hasAccess) return res.status(403).json({ error: 'Forbidden', code: 'FORBIDDEN' });
+
+    await Note.findByIdAndUpdate(req.params.id, {
+      shareToken: null,
+      isShared: false,
+    });
+
+    return res.status(200).json({ message: 'Share link revoked' });
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
+  }
+}
+
+/**
+ * GET /api/notes/public/:token
+ * Fetch a note by its share token — NO authentication required.
+ * Returns note content + sharePermission. Never returns workspace internals.
+ */
+async function getPublic(req, res) {
+  try {
+    const note = await Note.findOne({ shareToken: req.params.token, isShared: true });
+    if (!note) {
+      return res.status(404).json({ error: 'Note not found or link has been revoked', code: 'NOT_FOUND' });
+    }
+
+    // Return a safe subset — no workspaceId, no internal IDs
+    return res.status(200).json({
+      id: note._id.toString(),
+      title: note.title,
+      content: note.content,
+      sharePermission: note.sharePermission,
+      updatedAt: note.updatedAt,
+      createdAt: note.createdAt,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error', code: 'INTERNAL_ERROR' });
+  }
+}
