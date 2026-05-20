@@ -6,6 +6,10 @@ const { signToken } = require('../utils/jwt');
 
 const SALT_ROUNDS = 12;
 
+function normalizeEmail(email) {
+  return email && email.trim().toLowerCase();
+}
+
 /**
  * POST /api/auth/signup
  * Creates a new user account.
@@ -14,7 +18,8 @@ const SALT_ROUNDS = 12;
  */
 async function signup(req, res) {
   try {
-    const { name, email, password } = req.body;
+    const { name, password } = req.body;
+    const email = normalizeEmail(req.body.email);
 
     const existing = await User.findOne({ email });
     if (existing) {
@@ -39,7 +44,8 @@ async function signup(req, res) {
  */
 async function login(req, res) {
   try {
-    const { email, password } = req.body;
+    const { password } = req.body;
+    const email = normalizeEmail(req.body.email);
 
     const user = await User.findOne({ email }).select('+passwordHash');
     if (!user || !user.passwordHash) {
