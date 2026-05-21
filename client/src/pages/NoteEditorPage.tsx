@@ -1,6 +1,17 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Hash, Link2 } from 'lucide-react';
+import {
+  ArrowLeft,
+  BookOpen,
+  Clock3,
+  Focus,
+  Hash,
+  Link2,
+  PanelRight,
+  RotateCcw,
+  Save,
+  X,
+} from 'lucide-react';
 import toast from 'react-hot-toast';
 import { TipTapEditor } from '@/components/editor/TipTapEditor';
 import { Toolbar } from '@/components/editor/Toolbar';
@@ -15,8 +26,69 @@ import { useCollaboration } from '@/hooks/useCollaboration';
 import { useDebounce } from '@/hooks/useDebounce';
 import { db } from '@/lib/db';
 import { isBlankHtml } from '@/utils/noteContent';
+import { cn } from '@/utils/cn';
 import type { Editor } from '@tiptap/react';
 import type { Note } from '@/types';
+
+interface OutlineItem {
+  id: string;
+  text: string;
+  level: number;
+}
+
+interface NoteSnapshot {
+  id: string;
+  title: string;
+  content: string;
+  savedAt: string;
+}
+
+const SNAPSHOT_KEY_PREFIX = 'notecraft_note_snapshots:';
+
+function getSnapshotKey(noteId: string) {
+  return `${SNAPSHOT_KEY_PREFIX}${noteId}`;
+}
+
+function loadSnapshots(noteId: string): NoteSnapshot[] {
+  try {
+    const raw = localStorage.getItem(getSnapshotKey(noteId));
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    localStorage.removeItem(getSnapshotKey(noteId));
+    return [];
+  }
+}
+
+function storeSnapshot(noteId: string, title: string, content: string) {
+  if (!noteId || !content.trim()) return;
+  const snapshots = loadSnapshots(noteId);
+  if (snapshots[0]?.title === title && snapshots[0]?.content === content) return;
+  const next = [
+    { id: `${Date.now()}`, title: title || 'Untitled', content, savedAt: new Date().toISOString() },
+    ...snapshots,
+  ].slice(0, 10);
+  localStorage.setItem(getSnapshotKey(noteId), JSON.stringify(next));
+}
+
+function extractOutline(html: string): OutlineItem[] {
+  const root = document.createElement('div');
+  root.innerHTML = html;
+  return Array.from(root.querySelectorAll('h1, h2, h3'))
+    .map((heading, index) => ({
+      id: `heading-${index}`,
+      text: heading.textContent?.trim() || 'Untitled heading',
+      level: Number(heading.tagName.slice(1)),
+    }));
+}
+
+function formatSnapshotTime(value: string) {
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(value));
+}
 
 export function NoteEditorPage() {
   const { id: workspaceId = '', noteId = '' } = useParams<{ id: string; noteId: string }>();
@@ -35,6 +107,12 @@ export function NoteEditorPage() {
   // const [isMembersOpen, setIsMembersOpen] = useState(false);
   const [isShareOpen, setIsShareOpen] = useState(false);  // The resolved note — either from server or from IDB when offline
   const [resolvedNote, setResolvedNote] = useState<Note | null>(null);
+  const [isStatsOpen, setIsStatsOpen] = useState(false);
+  const [isOutlineOpen, setIsOutlineOpen] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isFocusMode, setIsFocusMode] = useState(false);
+  const [hasPendingSync, setHasPendingSync] = useState(false);
+  const [snapshots, setSnapshots] = useState<NoteSnapshot[]>([]);
 
   const debouncedContent = useDebounce(content, 1500);
   const debouncedTitle = useDebounce(title, 1500);
@@ -49,6 +127,15 @@ export function NoteEditorPage() {
   const lastSavedTitleRef = useRef('');
   const activeNoteIdRef = useRef(noteId);
   activeNoteIdRef.current = noteId;
+
+  const paragraphCount = content
+    ? (new DOMParser().parseFromString(content, 'text/html').body.textContent || '')
+      .split(/\n+/)
+      .filter(Boolean).length || (content.trim() ? 1 : 0)
+    : 0;
+  const readingMinutes = Math.max(1, Math.ceil(wordCount / 220));
+  const outline = extractOutline(content);
+  const pendingOfflineChanges = hasPendingSync;
 
   const {
     data: serverNote,
@@ -75,6 +162,11 @@ export function NoteEditorPage() {
 
   const cursorTimerRef = useRef<ReturnType<typeof setTimeout>>();
 
+  const rememberSnapshot = useCallback((nextTitle: string, nextContent: string) => {
+    storeSnapshot(noteId, nextTitle, nextContent);
+    setSnapshots(loadSnapshots(noteId));
+  }, [noteId]);
+
   // Reset when noteId changes
   useEffect(() => {
     userEditedRef.current = false;
@@ -85,11 +177,34 @@ export function NoteEditorPage() {
     setWordCount(0);
     setCharCount(0);
     setResolvedNote(null);
+    setSnapshots(loadSnapshots(noteId));
+    setIsStatsOpen(false);
+    setIsOutlineOpen(false);
+    setIsHistoryOpen(false);
+    setHasPendingSync(false);
     lastSavedContentRef.current = '';
     lastSavedTitleRef.current = '';
     dispatch(setSaveStatus('saved'));
     return () => clearTimeout(cursorTimerRef.current);
   }, [noteId, dispatch]);
+
+  useEffect(() => {
+    if (!noteId) return;
+    let cancelled = false;
+    db.syncQueue
+      .where('noteId')
+      .equals(noteId)
+      .toArray()
+      .then(items => {
+        if (!cancelled) setHasPendingSync(items.some(item => item.needsSync));
+      })
+      .catch(() => {
+        if (!cancelled) setHasPendingSync(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [noteId, saveStatus]);
 
   // When server note arrives — only for the active noteId (avoid stale RTK cache)
   useEffect(() => {
@@ -210,9 +325,12 @@ export function NoteEditorPage() {
       if (isOffline) {
         if (noteId) {
           await db.syncQueue.put({ noteId, needsSync: true });
+          setHasPendingSync(true);
         }
         lastSavedContentRef.current = debouncedContent;
         lastSavedTitleRef.current = debouncedTitle;
+        rememberSnapshot(debouncedTitle, debouncedContent);
+        setHasPendingSync(false);
         userEditedRef.current = false;
         dispatch(setSaveStatus('offline'));
         return;
@@ -222,6 +340,7 @@ export function NoteEditorPage() {
         await updateNote({ id: noteId, title: debouncedTitle, content: debouncedContent }).unwrap();
         lastSavedContentRef.current = debouncedContent;
         lastSavedTitleRef.current = debouncedTitle;
+        rememberSnapshot(debouncedTitle, debouncedContent);
         userEditedRef.current = false;
         dispatch(setSaveStatus('saved'));
       } catch {
@@ -231,7 +350,7 @@ export function NoteEditorPage() {
     };
 
     save();
-  }, [debouncedContent, debouncedTitle, noteId, isOffline, isResolvingThisNote, dispatch, updateNote]);
+  }, [debouncedContent, debouncedTitle, noteId, isOffline, isResolvingThisNote, dispatch, updateNote, rememberSnapshot]);
 
   // Ctrl/Cmd+S
   useEffect(() => {
@@ -256,6 +375,7 @@ export function NoteEditorPage() {
 
         if (isOffline) {
           await db.syncQueue.put({ noteId, needsSync: true });
+          setHasPendingSync(true);
           dispatch(setSaveStatus('offline'));
           toast('Saved locally — will sync when online', { icon: '📴' });
           return;
@@ -265,6 +385,8 @@ export function NoteEditorPage() {
           await updateNote({ id: noteId, title, content }).unwrap();
           lastSavedContentRef.current = content;
           lastSavedTitleRef.current = title;
+          rememberSnapshot(title, content);
+          setHasPendingSync(false);
           userEditedRef.current = false;
           dispatch(setSaveStatus('saved'));
           toast.success('Saved');
@@ -276,7 +398,7 @@ export function NoteEditorPage() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [noteId, title, content, resolvedNote, isOffline, isResolvingThisNote, dispatch, updateNote]);
+  }, [noteId, title, content, resolvedNote, isOffline, isResolvingThisNote, dispatch, updateNote, rememberSnapshot]);
 
   const handleEditorHydrated = useCallback(() => {
     isHydratingRef.current = false;
@@ -327,6 +449,78 @@ export function NoteEditorPage() {
     setEditorInstance(editor);
   }, []);
 
+  const handleManualSave = useCallback(async () => {
+    if (!noteId || isResolvingThisNote) return;
+    dispatch(setSaveStatus('saving'));
+
+    if (resolvedNote) {
+      await db.notes.put({
+        ...resolvedNote,
+        title,
+        content,
+        updatedAt: new Date().toISOString(),
+      });
+    }
+
+    if (isOffline) {
+      await db.syncQueue.put({ noteId, needsSync: true });
+      setHasPendingSync(true);
+      rememberSnapshot(title, content);
+      dispatch(setSaveStatus('offline'));
+      toast('Saved locally — will sync when online', { icon: '📴' });
+      return;
+    }
+
+    try {
+      await updateNote({ id: noteId, title, content }).unwrap();
+      lastSavedContentRef.current = content;
+      lastSavedTitleRef.current = title;
+      userEditedRef.current = false;
+      rememberSnapshot(title, content);
+      setHasPendingSync(false);
+      dispatch(setSaveStatus('saved'));
+      toast.success('Saved');
+    } catch {
+      dispatch(setSaveStatus('error'));
+      toast.error('Save failed');
+    }
+  }, [content, dispatch, isOffline, isResolvingThisNote, noteId, rememberSnapshot, resolvedNote, title, updateNote]);
+
+  const handleCopyCode = useCallback(async () => {
+    if (!editorInstance) return;
+    const { $from } = editorInstance.state.selection;
+    const node = $from.parent.type.name === 'codeBlock' ? $from.parent : null;
+    const text = node?.textContent;
+    if (!text) {
+      toast.error('Place the cursor inside a code block first');
+      return;
+    }
+    await navigator.clipboard.writeText(text);
+    toast.success('Code copied');
+  }, [editorInstance]);
+
+  const handleRestoreSnapshot = useCallback((snapshot: NoteSnapshot) => {
+    isHydratingRef.current = true;
+    skipNextAutosaveRef.current = true;
+    userEditedRef.current = true;
+    contentLoadedRef.current = true;
+    setTitle(snapshot.title);
+    setContent(snapshot.content);
+    editorInstance?.commands.setContent(snapshot.content || '<p></p>', false);
+    dispatch(setSaveStatus('saving'));
+    queueMicrotask(() => {
+      isHydratingRef.current = false;
+    });
+    setIsHistoryOpen(false);
+    toast('Snapshot restored — save to keep it', { icon: '↩' });
+  }, [dispatch, editorInstance]);
+
+  const handleOutlineJump = useCallback((index: number) => {
+    const editorElement = document.querySelector('.ProseMirror');
+    const heading = editorElement?.querySelectorAll('h1, h2, h3')[index];
+    heading?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, []);
+
   // Register the remote updater so content from other users updates the editor
   const handleRegisterRemoteUpdater = useCallback((updater: (content: string, title: string) => void) => {
     setOnRemoteContent((incomingContent: string, incomingTitle: string) => {
@@ -366,7 +560,10 @@ export function NoteEditorPage() {
   return (
     <div className="flex flex-col h-screen bg-gray-50 dark:bg-gray-950">
       {/* Top bar */}
-      <div className="h-14 shrink-0 flex items-center justify-between px-4 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 shadow-sm z-30">
+      <div className={cn(
+        'h-14 shrink-0 items-center justify-between px-4 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 shadow-sm z-30',
+        isFocusMode ? 'hidden' : 'flex'
+      )}>
         <div className="flex items-center gap-3">
           <button
             onClick={() => navigate(`/workspace/${workspaceId}`)}
@@ -383,15 +580,84 @@ export function NoteEditorPage() {
             aria-label="Note title"
             className="text-lg font-semibold bg-transparent text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-600 focus:outline-none w-64 sm:w-96"
           />
+          {workspace && (
+            <span className="hidden lg:inline text-xs text-gray-400 dark:text-gray-600">
+              {workspace.name} / {title || 'Untitled'}
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-3">
           <PresenceBar collaborators={collaborators} />
+          {pendingOfflineChanges && (
+            <span className="hidden md:inline-flex rounded-full bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
+              Offline changes pending
+            </span>
+          )}
           <AutoSaveIndicator status={saveStatus} />
-          <div className="hidden sm:flex items-center gap-1 text-xs text-gray-400 dark:text-gray-600">
-            <Hash className="h-3.5 w-3.5" />
-            <span>{wordCount}w · {charCount}c</span>
+          <button
+            type="button"
+            onClick={() => void handleManualSave()}
+            disabled={isResolvingThisNote}
+            title="Save now"
+            aria-label="Save now"
+            className="rounded-lg p-2 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 disabled:opacity-40 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+          >
+            <Save className="h-4 w-4" />
+          </button>
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setIsStatsOpen(v => !v)}
+              className="hidden sm:flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:text-gray-600 dark:hover:bg-gray-800 dark:hover:text-gray-300"
+              aria-label="Document statistics"
+            >
+              <Hash className="h-3.5 w-3.5" />
+              <span>{wordCount}w · {charCount}c</span>
+            </button>
+            {isStatsOpen && (
+              <div className="absolute right-0 top-full mt-2 w-52 rounded-lg border border-gray-200 bg-white p-3 text-xs text-gray-600 shadow-xl dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300">
+                <div className="flex justify-between py-1"><span>Words</span><strong>{wordCount}</strong></div>
+                <div className="flex justify-between py-1"><span>Characters</span><strong>{charCount}</strong></div>
+                <div className="flex justify-between py-1"><span>Paragraphs</span><strong>{paragraphCount}</strong></div>
+                <div className="flex justify-between py-1"><span>Reading time</span><strong>{readingMinutes} min</strong></div>
+                <div className="flex justify-between py-1"><span>Last edited</span><strong>{resolvedNote?.updatedAt ? formatSnapshotTime(resolvedNote.updatedAt) : 'Now'}</strong></div>
+              </div>
+            )}
           </div>
+          <button
+            type="button"
+            onClick={() => {
+              setIsHistoryOpen(v => !v);
+              setIsOutlineOpen(false);
+            }}
+            title="Recent snapshots"
+            aria-label="Recent snapshots"
+            className="rounded-lg p-2 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+          >
+            <Clock3 className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setIsOutlineOpen(v => !v);
+              setIsHistoryOpen(false);
+            }}
+            title="Document outline"
+            aria-label="Document outline"
+            className="rounded-lg p-2 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+          >
+            <PanelRight className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setIsFocusMode(true)}
+            title="Focus mode"
+            aria-label="Focus mode"
+            className="rounded-lg p-2 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+          >
+            <Focus className="h-4 w-4" />
+          </button>
           {workspace && (
             <div className="flex items-center gap-2">
               <button
@@ -408,13 +674,26 @@ export function NoteEditorPage() {
       </div>
 
       {/* Toolbar */}
-      <div className="shrink-0 z-20">
-        <Toolbar editor={editorInstance} noteTitle={title} />
+      <div className={cn('shrink-0 z-20', isFocusMode && 'hidden')}>
+        <Toolbar editor={editorInstance} noteTitle={title} onCopyCode={handleCopyCode} />
       </div>
 
       {/* Editor */}
-      <div className="flex-1 overflow-auto bg-gray-100 dark:bg-gray-900">
-        <div className="max-w-4xl mx-auto my-6 bg-white dark:bg-gray-950 shadow-md rounded-sm">
+      <div className="relative flex-1 overflow-auto bg-gray-100 dark:bg-gray-900">
+        {isFocusMode && (
+          <button
+            type="button"
+            onClick={() => setIsFocusMode(false)}
+            aria-label="Exit focus mode"
+            className="fixed right-4 top-4 z-40 rounded-lg bg-white p-2 text-gray-500 shadow-md transition-colors hover:text-gray-800 dark:bg-gray-900 dark:text-gray-400 dark:hover:text-gray-100"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        )}
+        <div className={cn(
+          'mx-auto bg-white dark:bg-gray-950 shadow-md rounded-sm transition-all',
+          isFocusMode ? 'my-0 min-h-full max-w-5xl shadow-none' : 'my-6 max-w-4xl'
+        )}>
           <TipTapEditor
             key={noteId}
             noteId={noteId}
@@ -433,6 +712,65 @@ export function NoteEditorPage() {
             isReadOnly={collabReadOnly}
           />
         </div>
+
+        {(isOutlineOpen || isHistoryOpen) && !isFocusMode && (
+          <aside className="fixed right-4 top-32 z-30 w-72 rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
+            <div className="flex items-center justify-between border-b border-gray-200 px-3 py-2 dark:border-gray-700">
+              <div className="flex items-center gap-2 text-sm font-semibold text-gray-800 dark:text-gray-100">
+                {isHistoryOpen ? <Clock3 className="h-4 w-4" /> : <BookOpen className="h-4 w-4" />}
+                {isHistoryOpen ? 'Recent snapshots' : 'Outline'}
+              </div>
+              <button
+                type="button"
+                onClick={() => { setIsOutlineOpen(false); setIsHistoryOpen(false); }}
+                aria-label="Close panel"
+                className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="max-h-96 overflow-auto p-2">
+              {isOutlineOpen && (
+                outline.length > 0 ? outline.map((item, index) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => handleOutlineJump(index)}
+                    className="block w-full rounded px-2 py-1.5 text-left text-sm text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
+                    style={{ paddingLeft: `${8 + (item.level - 1) * 12}px` }}
+                  >
+                    {item.text}
+                  </button>
+                )) : (
+                  <p className="px-2 py-6 text-center text-sm text-gray-400">Add headings to build an outline.</p>
+                )
+              )}
+              {isHistoryOpen && (
+                snapshots.length > 0 ? snapshots.map(snapshot => (
+                  <div key={snapshot.id} className="rounded-lg p-2 hover:bg-gray-50 dark:hover:bg-gray-800">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-gray-800 dark:text-gray-100">{snapshot.title}</p>
+                        <p className="text-xs text-gray-400">{formatSnapshotTime(snapshot.savedAt)}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleRestoreSnapshot(snapshot)}
+                        className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-700 dark:hover:text-gray-200"
+                        aria-label="Restore snapshot"
+                        title="Restore snapshot"
+                      >
+                        <RotateCcw className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                )) : (
+                  <p className="px-2 py-6 text-center text-sm text-gray-400">Snapshots appear after saves.</p>
+                )
+              )}
+            </div>
+          </aside>
+        )}
       </div>
 
       {workspace && resolvedNote && (

@@ -6,7 +6,7 @@ import {
   List, ListOrdered, Code, Quote,
   AlignLeft, AlignCenter, AlignRight, AlignJustify,
   ImageIcon, Highlighter, Undo, Redo, Minus,
-  Download, FileCode, FileJson, FileText, FileType,
+  Download, FileCode, FileJson, FileText, FileType, Copy,
 } from 'lucide-react';
 import { cn } from '@/utils/cn';
 import { exportNote, type ExportFormat } from '@/utils/exportNote';
@@ -14,6 +14,7 @@ import { exportNote, type ExportFormat } from '@/utils/exportNote';
 interface ToolbarProps {
   editor: Editor | null;
   noteTitle?: string;
+  onCopyCode?: () => void;
 }
 
 function Btn({
@@ -88,7 +89,18 @@ const EXPORT_OPTIONS: Array<{
   { format: 'json', label: 'JSON', description: 'Structured backup', icon: <FileJson className="h-4 w-4" /> },
 ];
 
-export function Toolbar({ editor, noteTitle = 'Untitled note' }: ToolbarProps) {
+const CODE_LANGUAGES = [
+  { value: '', label: 'Plain' },
+  { value: 'javascript', label: 'JS' },
+  { value: 'typescript', label: 'TS' },
+  { value: 'python', label: 'Py' },
+  { value: 'html', label: 'HTML' },
+  { value: 'css', label: 'CSS' },
+  { value: 'json', label: 'JSON' },
+  { value: 'bash', label: 'Shell' },
+];
+
+export function Toolbar({ editor, noteTitle = 'Untitled note', onCopyCode }: ToolbarProps) {
   const [showColor, setShowColor] = useState(false);
   const [showHighlight, setShowHighlight] = useState(false);
   const [showExport, setShowExport] = useState(false);
@@ -306,6 +318,25 @@ export function Toolbar({ editor, noteTitle = 'Untitled note' }: ToolbarProps) {
       <Btn onClick={() => editor.chain().focus().toggleCodeBlock().run()} active={editor.isActive('codeBlock')} title="Code block (Ctrl+Alt+C)">
         <Code className="h-4 w-4" />
       </Btn>
+      {editor.isActive('codeBlock') && (
+        <>
+          <select
+            value={(editor.getAttributes('codeBlock').language as string | undefined) ?? ''}
+            onMouseDown={e => e.stopPropagation()}
+            onChange={e => editor.chain().focus().updateAttributes('codeBlock', { language: e.target.value || null }).run()}
+            aria-label="Code block language"
+            title="Code block language"
+            className="h-7 rounded border border-gray-200 bg-white px-1.5 text-xs text-gray-600 outline-none dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
+          >
+            {CODE_LANGUAGES.map(language => (
+              <option key={language.value} value={language.value}>{language.label}</option>
+            ))}
+          </select>
+          <Btn onClick={() => onCopyCode?.()} title="Copy current code block">
+            <Copy className="h-4 w-4" />
+          </Btn>
+        </>
+      )}
       <Btn onClick={() => editor.chain().focus().toggleBlockquote().run()} active={editor.isActive('blockquote')} title="Blockquote (Ctrl+Shift+B)">
         <Quote className="h-4 w-4" />
       </Btn>
