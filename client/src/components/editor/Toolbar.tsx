@@ -6,11 +6,14 @@ import {
   List, ListOrdered, Code, Quote,
   AlignLeft, AlignCenter, AlignRight, AlignJustify,
   ImageIcon, Highlighter, Undo, Redo, Minus,
+  Download, FileCode, FileJson, FileText, FileType,
 } from 'lucide-react';
 import { cn } from '@/utils/cn';
+import { exportNote, type ExportFormat } from '@/utils/exportNote';
 
 interface ToolbarProps {
   editor: Editor | null;
+  noteTitle?: string;
 }
 
 function Btn({
@@ -71,9 +74,24 @@ const HIGHLIGHT_COLORS = [
   { hex: '#E5E7EB', label: 'Gray' },
 ];
 
-export function Toolbar({ editor }: ToolbarProps) {
+const EXPORT_OPTIONS: Array<{
+  format: ExportFormat;
+  label: string;
+  description: string;
+  icon: React.ReactNode;
+}> = [
+  { format: 'html', label: 'HTML', description: 'Web page', icon: <FileCode className="h-4 w-4" /> },
+  { format: 'md', label: 'Markdown', description: 'Portable notes', icon: <FileText className="h-4 w-4" /> },
+  { format: 'txt', label: 'Plain text', description: 'Readable anywhere', icon: <FileText className="h-4 w-4" /> },
+  { format: 'pdf', label: 'PDF', description: 'Print or save', icon: <FileType className="h-4 w-4" /> },
+  { format: 'doc', label: 'DOC', description: 'Opens in Word', icon: <FileType className="h-4 w-4" /> },
+  { format: 'json', label: 'JSON', description: 'Structured backup', icon: <FileJson className="h-4 w-4" /> },
+];
+
+export function Toolbar({ editor, noteTitle = 'Untitled note' }: ToolbarProps) {
   const [showColor, setShowColor] = useState(false);
   const [showHighlight, setShowHighlight] = useState(false);
+  const [showExport, setShowExport] = useState(false);
 
   // Show a placeholder bar while editor is initializing
   if (!editor) {
@@ -123,6 +141,11 @@ export function Toolbar({ editor }: ToolbarProps) {
   };
 
   const activeColor = editor.getAttributes('textStyle').color as string | undefined;
+
+  const handleExport = (format: ExportFormat) => {
+    exportNote(editor, noteTitle, format);
+    setShowExport(false);
+  };
 
   return (
     <div
@@ -296,6 +319,52 @@ export function Toolbar({ editor }: ToolbarProps) {
       <Btn onClick={handleImageUpload} title="Insert image (Ctrl+Shift+I)">
         <ImageIcon className="h-4 w-4" />
       </Btn>
+
+      <Sep />
+
+      {/* Export */}
+      <div className="relative">
+        <button
+          type="button"
+          onMouseDown={e => {
+            e.preventDefault();
+            setShowExport(v => !v);
+            setShowColor(false);
+            setShowHighlight(false);
+          }}
+          title="Export note"
+          aria-label="Export note"
+          aria-expanded={showExport}
+          className="p-1.5 rounded transition-colors text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-gray-100"
+        >
+          <Download className="h-4 w-4" />
+        </button>
+        {showExport && (
+          <div className="absolute top-full right-0 mt-1 w-56 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-xl z-50 p-1">
+            {EXPORT_OPTIONS.map(option => (
+              <button
+                key={option.format}
+                type="button"
+                onMouseDown={e => {
+                  e.preventDefault();
+                  handleExport(option.format);
+                }}
+                className="w-full flex items-center gap-3 px-3 py-2 rounded-md text-left hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+              >
+                <span className="text-gray-500 dark:text-gray-400">{option.icon}</span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium text-gray-800 dark:text-gray-100">
+                    {option.label}
+                  </span>
+                  <span className="block text-xs text-gray-500 dark:text-gray-400">
+                    {option.description}
+                  </span>
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

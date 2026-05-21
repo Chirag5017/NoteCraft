@@ -370,7 +370,7 @@ export function NoteEditorPage() {
 
       {/* Toolbar */}
       <div className="shrink-0 z-20">
-        <Toolbar editor={editorInstance} />
+        <Toolbar editor={editorInstance} noteTitle={title} />
       </div>
 
       {/* Editor */}
