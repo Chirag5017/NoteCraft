@@ -134,7 +134,7 @@ function downloadFile(content: string, fileName: string, format: ExportFormat) {
 async function printPdf(htmlDocument: string) {
   const iframe = document.createElement('iframe');
   iframe.title = 'PDF export';
-  iframe.setAttribute('aria-hidden', 'true');
+  iframe.setAttribute('aria-hidden', 'true');https://github.com/Chirag5017/NoteCraft
   iframe.style.position = 'fixed';
   iframe.style.left = '-10000px';
   iframe.style.top = '0';

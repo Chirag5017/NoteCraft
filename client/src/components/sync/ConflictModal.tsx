@@ -4,7 +4,7 @@ import toast from 'react-hot-toast';
 import { Button } from '@/components/ui/Button';
 import { useAppDispatch, useAppSelector, selectConflicts } from '@/store';
 import { clearConflicts, setSyncing, setOffline } from '@/store/uiSlice';
-import { useUpdateNoteMutation } from '@/store/api';
+import { api, useUpdateNoteMutation } from '@/store/api';
 import { db } from '@/lib/db';
 import { formatFullDate } from '@/utils/formatDate';
 import type { ConflictItem } from '@/types';
@@ -42,48 +42,69 @@ export function ConflictModal() {
 
   const allResolved = conflicts.length > 0 && conflicts.every(c => selections[c.noteId]);
 
-  const handleDismiss = () => {
-    // Allow dismissing without resolving — mark all as server version to unblock
+  const resolveConflicts = async (choices: Record<string, 'local' | 'server'>) => {
+    await Promise.all(
+      conflicts.map(async (conflict: ConflictItem) => {
+        const useLocal = choices[conflict.noteId] === 'local';
+        const chosen = useLocal ? conflict.localVersion : conflict.serverVersion;
+        const noteId = chosen.id ?? conflict.noteId;
+
+        if (useLocal) {
+          await updateNote({
+            id: noteId,
+            title: chosen.title,
+            content: chosen.content,
+          }).unwrap();
+        }
+
+        // Update IDB with the chosen version
+        await db.notes.put({ ...chosen, id: noteId });
+        dispatch(
+          api.util.updateQueryData('getNote', noteId, draft => {
+            Object.assign(draft, { ...chosen, id: noteId });
+          })
+        );
+        window.dispatchEvent(
+          new CustomEvent('notecraft:note-resolved', {
+            detail: { note: { ...chosen, id: noteId } },
+          })
+        );
+
+        // Clear this note from the sync queue
+        const queueItems = await db.syncQueue
+          .where('noteId')
+          .equals(noteId)
+          .toArray();
+        await db.syncQueue.bulkDelete(queueItems.map(q => q.id!));
+      })
+    );
+
     dispatch(clearConflicts());
     dispatch(setSyncing(false));
     dispatch(setOffline(false));
+    dispatch(api.util.invalidateTags(['Note']));
+  };
+
+  const handleDismiss = async () => {
+    setIsResolving(true);
+    try {
+      const serverChoices = Object.fromEntries(
+        conflicts.map(conflict => [conflict.noteId, 'server'])
+      ) as Record<string, 'server'>;
+      await resolveConflicts(serverChoices);
+      toast.success('Kept server version');
+    } catch {
+      toast.error('Failed to keep server version — please try again');
+    } finally {
+      setIsResolving(false);
+    }
   };
 
   const handleConfirm = async () => {
     if (!allResolved) return;
     setIsResolving(true);
     try {
-      await Promise.all(
-        conflicts.map(async (conflict: ConflictItem) => {
-          const chosen =
-            selections[conflict.noteId] === 'local'
-              ? conflict.localVersion
-              : conflict.serverVersion;
-
-          const noteId = chosen.id ?? conflict.noteId;
-
-          // Save chosen version to API
-          await updateNote({
-            id: noteId,
-            title: chosen.title,
-            content: chosen.content,
-          }).unwrap();
-
-          // Update IDB with chosen version
-          await db.notes.put({ ...chosen, id: noteId });
-
-          // Clear this note from the sync queue
-          const queueItems = await db.syncQueue
-            .where('noteId')
-            .equals(noteId)
-            .toArray();
-          await db.syncQueue.bulkDelete(queueItems.map(q => q.id!));
-        })
-      );
-
-      dispatch(clearConflicts());
-      dispatch(setSyncing(false));
-      dispatch(setOffline(false));
+      await resolveConflicts(selections);
       toast.success('Conflicts resolved');
     } catch {
       toast.error('Failed to resolve some conflicts — please try again');
@@ -118,7 +139,8 @@ export function ConflictModal() {
           </div>
           <button
             onClick={handleDismiss}
-            aria-label="Dismiss conflicts"
+            disabled={isResolving}
+            aria-label="Keep server versions"
             className="rounded-lg p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 dark:hover:text-gray-200 transition-colors"
           >
             <X className="h-5 w-5" />
@@ -197,8 +219,8 @@ export function ConflictModal() {
             {Object.keys(selections).length}/{conflicts.length} selected
           </p>
           <div className="flex gap-2">
-            <Button variant="ghost" size="sm" onClick={handleDismiss}>
-              Skip for now
+            <Button variant="ghost" size="sm" onClick={handleDismiss} isLoading={isResolving}>
+              Keep server
             </Button>
             <Button
               variant="primary"

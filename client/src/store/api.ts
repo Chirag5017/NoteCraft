@@ -167,6 +167,7 @@ export const {
   useDeleteNoteMutation,
   useSearchNotesQuery,
   useSyncNotesMutation,
+  useLazyGetNoteQuery,
   useGetPublicNoteQuery,
   useShareNoteMutation,
   useUnshareNoteMutation,

@@ -105,6 +105,41 @@ export function NoteEditorPage() {
     contentLoadedRef.current = true;
   }, [serverNote, noteId]);
 
+  useEffect(() => {
+    const handleResolvedNote = (event: Event) => {
+      const note = (event as CustomEvent<{ note?: Note }>).detail?.note;
+      if (!note || note.id !== noteId) return;
+
+      const nextContent = note.content || '';
+      isHydratingRef.current = true;
+      skipNextAutosaveRef.current = true;
+      userEditedRef.current = false;
+      contentLoadedRef.current = true;
+
+      setResolvedNote(note);
+      setTitle(note.title);
+      setContent(nextContent);
+      lastSavedContentRef.current = nextContent;
+      lastSavedTitleRef.current = note.title;
+
+      editorInstance?.commands.setContent(nextContent || '<p></p>', false);
+
+      const tmp = document.createElement('div');
+      tmp.innerHTML = nextContent;
+      const text = tmp.textContent || '';
+      setWordCount(text.trim() ? text.trim().split(/\s+/).length : 0);
+      setCharCount(text.length);
+      dispatch(setSaveStatus('saved'));
+
+      queueMicrotask(() => {
+        isHydratingRef.current = false;
+      });
+    };
+
+    window.addEventListener('notecraft:note-resolved', handleResolvedNote);
+    return () => window.removeEventListener('notecraft:note-resolved', handleResolvedNote);
+  }, [dispatch, editorInstance, noteId]);
+
   // When server fetch fails (offline) — fall back to IndexedDB
   useEffect(() => {
     if (!isError || !noteId) return;

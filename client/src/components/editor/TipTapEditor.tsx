@@ -162,6 +162,7 @@ export function TipTapEditor({
 }: TipTapEditorProps) {
   const initialised = useRef(false);
   const prevNoteIdRef = useRef('');
+  const prevHydratedContentRef = useRef('');
   const skipNextUpdateRef = useRef(true);
   const onCursorChangeRef = useRef(onCursorChange);
   onCursorChangeRef.current = onCursorChange;
@@ -215,19 +216,52 @@ export function TipTapEditor({
     if (noteChanged) {
       prevNoteIdRef.current = noteId;
       initialised.current = false;
+      prevHydratedContentRef.current = '';
       skipNextUpdateRef.current = true;
     }
 
-    if (initialised.current) return;
     if (initialContent === undefined) return;
 
     const content = parseContent(initialContent);
+
+    if (initialised.current) {
+      const currentContent = editor.getHTML();
+      if (
+        content === prevHydratedContentRef.current &&
+        currentContent === prevHydratedContentRef.current
+      ) {
+        return;
+      }
+      if (
+        content !== prevHydratedContentRef.current &&
+        currentContent !== prevHydratedContentRef.current
+      ) {
+        return;
+      }
+
+      isApplyingRemoteRef.current = true;
+      try {
+        skipNextUpdateRef.current = true;
+        editor.commands.setContent(content || '<p></p>', false);
+        prevHydratedContentRef.current = content;
+        skipNextUpdateRef.current = false;
+      } catch {
+        editor.commands.setContent('<p></p>', false);
+        prevHydratedContentRef.current = '<p></p>';
+      } finally {
+        isApplyingRemoteRef.current = false;
+      }
+      return;
+    }
+
     const t = setTimeout(() => {
       isApplyingRemoteRef.current = true;
       try {
         editor.commands.setContent(content || '<p></p>', false);
+        prevHydratedContentRef.current = content;
       } catch {
         editor.commands.setContent('<p></p>', false);
+        prevHydratedContentRef.current = '<p></p>';
       }
       initialised.current = true;
       skipNextUpdateRef.current = false;
@@ -259,6 +293,7 @@ export function TipTapEditor({
       try {
         skipNextUpdateRef.current = true;
         editor.commands.setContent(parsed || '<p></p>', false);
+        prevHydratedContentRef.current = parsed;
         skipNextUpdateRef.current = false;
         // Restore cursor within bounds
         const docSize = editor.state.doc.content.size;

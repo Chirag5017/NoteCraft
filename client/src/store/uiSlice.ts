@@ -11,13 +11,32 @@ interface UIState {
 }
 
 const DARK_MODE_KEY = 'notecraft_dark_mode';
+const CONFLICTS_KEY = 'notecraft_unresolved_conflicts';
+
+function loadStoredConflicts(): ConflictItem[] {
+  try {
+    const raw = localStorage.getItem(CONFLICTS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    localStorage.removeItem(CONFLICTS_KEY);
+    return [];
+  }
+}
+
+function storeConflicts(conflicts: ConflictItem[]) {
+  if (conflicts.length > 0) {
+    localStorage.setItem(CONFLICTS_KEY, JSON.stringify(conflicts));
+  } else {
+    localStorage.removeItem(CONFLICTS_KEY);
+  }
+}
 
 const initialState: UIState = {
   isSearchOpen: false,
   isDarkMode: localStorage.getItem(DARK_MODE_KEY) === 'true',
   isOffline: !navigator.onLine,
   isSyncing: false,
-  conflicts: [],
+  conflicts: loadStoredConflicts(),
   isSidebarCollapsed: false,
 };
 
@@ -44,9 +63,11 @@ const uiSlice = createSlice({
     },
     setConflicts(state, action: PayloadAction<ConflictItem[]>) {
       state.conflicts = action.payload;
+      storeConflicts(action.payload);
     },
     clearConflicts(state) {
       state.conflicts = [];
+      storeConflicts([]);
     },
     toggleSidebar(state) {
       state.isSidebarCollapsed = !state.isSidebarCollapsed;
