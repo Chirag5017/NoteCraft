@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { Button } from '@/components/ui/Button';
 import { useAppDispatch, useAppSelector, selectConflicts } from '@/store';
 import { clearConflicts, setSyncing, setOffline } from '@/store/uiSlice';
+import { setNoteResolving } from '@/store/noteSlice';
 import { api, useUpdateNoteMutation } from '@/store/api';
 import { db } from '@/lib/db';
 import { formatFullDate } from '@/utils/formatDate';
@@ -49,33 +50,48 @@ export function ConflictModal() {
         const chosen = useLocal ? conflict.localVersion : conflict.serverVersion;
         const noteId = chosen.id ?? conflict.noteId;
 
-        if (useLocal) {
+        dispatch(setNoteResolving({ noteId, isResolving: true }));
+
+        try {
           await updateNote({
             id: noteId,
             title: chosen.title,
             content: chosen.content,
           }).unwrap();
+
+          if (!useLocal) {
+            await new Promise(resolve => window.setTimeout(resolve, 500));
+            await updateNote({
+              id: noteId,
+              title: chosen.title,
+              content: chosen.content,
+            }).unwrap();
+          }
+
+          // Update IDB with the chosen version
+          await db.notes.put({ ...chosen, id: noteId });
+          dispatch(
+            api.util.updateQueryData('getNote', noteId, draft => {
+              Object.assign(draft, { ...chosen, id: noteId });
+            })
+          );
+          window.dispatchEvent(
+            new CustomEvent('notecraft:note-resolved', {
+              detail: { note: { ...chosen, id: noteId } },
+            })
+          );
+
+          // Clear this note from the sync queue
+          const queueItems = await db.syncQueue
+            .where('noteId')
+            .equals(noteId)
+            .toArray();
+          await db.syncQueue.bulkDelete(queueItems.map(q => q.id!));
+        } finally {
+          window.setTimeout(() => {
+            dispatch(setNoteResolving({ noteId, isResolving: false }));
+          }, 1000);
         }
-
-        // Update IDB with the chosen version
-        await db.notes.put({ ...chosen, id: noteId });
-        dispatch(
-          api.util.updateQueryData('getNote', noteId, draft => {
-            Object.assign(draft, { ...chosen, id: noteId });
-          })
-        );
-        window.dispatchEvent(
-          new CustomEvent('notecraft:note-resolved', {
-            detail: { note: { ...chosen, id: noteId } },
-          })
-        );
-
-        // Clear this note from the sync queue
-        const queueItems = await db.syncQueue
-          .where('noteId')
-          .equals(noteId)
-          .toArray();
-        await db.syncQueue.bulkDelete(queueItems.map(q => q.id!));
       })
     );
 

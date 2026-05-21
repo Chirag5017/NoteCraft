@@ -36,6 +36,7 @@ export const selectActiveWorkspaceId = (state: RootState) => state.workspace.act
 export const selectExpandedFolderIds = (state: RootState) => state.folder.expandedFolderIds;
 export const selectActiveNoteId = (state: RootState) => state.note.activeNoteId;
 export const selectSaveStatus = (state: RootState) => state.note.saveStatus;
+export const selectResolvingNoteIds = (state: RootState) => state.note.resolvingNoteIds;
 export const selectIsSearchOpen = (state: RootState) => state.ui.isSearchOpen;
 export const selectIsDarkMode = (state: RootState) => state.ui.isDarkMode;
 export const selectIsOffline = (state: RootState) => state.ui.isOffline;

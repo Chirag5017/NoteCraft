@@ -9,7 +9,7 @@ import { AutoSaveIndicator } from '@/components/note/AutoSaveIndicator';
 // import { MembersModal } from '@/components/workspace/MembersModal';
 import { ShareNoteModal } from '@/components/note/ShareNoteModal';import { Skeleton } from '@/components/ui/Skeleton';
 import { useGetNoteQuery, useUpdateNoteMutation, useGetWorkspacesQuery } from '@/store/api';
-import { useAppDispatch, useAppSelector, selectIsOffline, selectSaveStatus, selectUser } from '@/store';
+import { useAppDispatch, useAppSelector, selectIsOffline, selectSaveStatus, selectUser, selectResolvingNoteIds } from '@/store';
 import { setSaveStatus, setActiveNote } from '@/store/noteSlice';
 import { useCollaboration } from '@/hooks/useCollaboration';
 import { useDebounce } from '@/hooks/useDebounce';
@@ -25,6 +25,7 @@ export function NoteEditorPage() {
   const isOffline = useAppSelector(selectIsOffline);
   const saveStatus = useAppSelector(selectSaveStatus);
   const currentUser = useAppSelector(selectUser);
+  const isResolvingThisNote = useAppSelector(state => selectResolvingNoteIds(state).includes(noteId));
 
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
@@ -172,6 +173,7 @@ export function NoteEditorPage() {
   // Auto-save (debounced) — only toggles status here, not on every keystroke
   useEffect(() => {
     if (!userEditedRef.current || !noteId) return;
+    if (isResolvingThisNote) return;
 
     if (skipNextAutosaveRef.current) {
       skipNextAutosaveRef.current = false;
@@ -189,6 +191,7 @@ export function NoteEditorPage() {
 
     const save = async () => {
       if (activeNoteIdRef.current !== savingForNoteId) return;
+      if (isResolvingThisNote) return;
 
       dispatch(setSaveStatus('saving'));
 
@@ -228,7 +231,7 @@ export function NoteEditorPage() {
     };
 
     save();
-  }, [debouncedContent, debouncedTitle, noteId, isOffline, dispatch, updateNote]);
+  }, [debouncedContent, debouncedTitle, noteId, isOffline, isResolvingThisNote, dispatch, updateNote]);
 
   // Ctrl/Cmd+S
   useEffect(() => {
@@ -236,6 +239,7 @@ export function NoteEditorPage() {
       if ((e.metaKey || e.ctrlKey) && e.key === 's') {
         e.preventDefault();
         if (!noteId) return;
+        if (isResolvingThisNote) return;
         dispatch(setSaveStatus('saving'));
 
         // Save to IDB always
@@ -272,7 +276,7 @@ export function NoteEditorPage() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [noteId, title, content, resolvedNote, isOffline, dispatch, updateNote]);
+  }, [noteId, title, content, resolvedNote, isOffline, isResolvingThisNote, dispatch, updateNote]);
 
   const handleEditorHydrated = useCallback(() => {
     isHydratingRef.current = false;
